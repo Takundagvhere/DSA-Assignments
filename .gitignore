@@ -1,0 +1,6 @@
+target/
+generated/
+*.jar
+Dependencies.toml
+.DS_Store
+.vscode/
