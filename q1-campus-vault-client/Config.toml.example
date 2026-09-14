@@ -1,6 +1,0 @@
-# Copy to Config.toml once the four service files are merged onto one listener.
-# Until then the defaults in api.bal match the split ports the server uses today.
-crudUrl = "http://localhost:8080"
-queryUrl = "http://localhost:8080"
-schedulingUrl = "http://localhost:8080"
-workOrderUrl = "http://localhost:8080"
