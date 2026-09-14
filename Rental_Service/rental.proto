@@ -1,0 +1,185 @@
+syntax = "proto3";
+
+
+enum PropertyStatus {
+    AVAILABLE = 0;
+    UNAVAILABLE = 1;
+    UNDER_RENOVATION = 2;
+}
+
+enum PropertyType {
+    APARTMENT = 0;
+    HOUSE = 1;
+    GUESTHOUSE = 2;
+    LODGE = 3;
+    CAMPSITE = 4;
+}
+
+enum UserRole {
+    HOST = 0;
+    GUEST = 1;
+}
+
+message User {
+    string user_id = 1;
+    string name = 2;
+    string email = 3;
+    UserRole role = 4;
+}
+
+message Property {
+    string property_id = 1;
+    string host_id = 2;
+    string name = 3;
+    string location = 4;
+    string region = 5;
+    PropertyType property_type = 6;
+    double price_per_night = 7;
+    PropertyStatus status = 8;
+    int32 max_guests = 9;
+}
+
+message Booking {
+    string booking_id = 1;
+    string property_id = 2;
+    string guest_id = 3;
+    string check_in_date = 4;
+    string check_out_date = 5;
+    int32 number_of_nights = 6;
+    double total_cost = 7;
+    bool confirmed = 8;
+}
+
+
+
+// ============================================================
+//  HOST OPERATIONS
+// ============================================================
+
+// --- add_property (simple RPC) ---
+message AddPropertyRequest {
+    string host_id = 1;
+    string name = 2;
+    string location = 3;
+    string region = 4;
+    PropertyType property_type = 5;
+    double price_per_night = 6;
+    int32 max_guests = 7;
+}
+
+message AddPropertyResponse {
+    string property_id = 1;
+    bool success = 2;
+    string message = 3;
+}
+
+// --- create_users (client streaming) ---
+message CreateUsersResponse {
+    int32 users_created = 1;
+    bool success = 2;
+    string message = 3;
+}
+
+// --- update_property (simple RPC) ---
+message UpdatePropertyRequest {
+    string property_id = 1;
+    string host_id = 2;
+    double price_per_night = 3;
+    PropertyStatus status = 4;
+    int32 max_guests = 5;
+}
+
+message UpdatePropertyResponse {
+    bool success = 1;
+    string message = 2;
+    Property updated_property = 3;
+}
+
+// --- remove_property (simple RPC) ---
+message RemovePropertyRequest {
+    string property_id = 1;
+    string host_id = 2;
+}
+
+message RemovePropertyResponse {
+    bool success = 1;
+    string message = 2;
+    repeated Property remaining_properties = 3;
+}
+
+
+// ============================================================
+//  GUEST OPERATIONS
+// ============================================================
+
+// --- list_available_properties (server streaming) ---
+message ListPropertiesRequest {
+    string location = 1;
+    double min_price = 2;
+    double max_price = 3;
+}
+
+// --- search_property (simple RPC) ---
+message SearchPropertyRequest {
+    string property_id = 1;
+}
+
+message SearchPropertyResponse {
+    bool available = 1;
+    string message = 2;
+    Property property = 3;
+}
+
+// --- book_property (simple RPC) ---
+message BookPropertyRequest {
+    string guest_id = 1;
+    string property_id = 2;
+    string check_in_date = 3;
+    string check_out_date = 4;
+}
+
+message BookPropertyResponse {
+    bool success = 1;
+    string message = 2;
+    string cart_id = 3;
+    int32 number_of_nights = 4;
+    double estimated_cost = 5;
+}
+
+// --- confirm_booking (simple RPC) ---
+message ConfirmBookingRequest {
+    string guest_id = 1;
+    string cart_id = 2;
+}
+
+message ConfirmBookingResponse {
+    bool success = 1;
+    string message = 2;
+    Booking booking = 3;
+}
+
+
+// ============================================================
+//  THE SERVICE
+// ============================================================
+
+service RentalService {
+
+    // --- Host operations ---
+    rpc add_property(AddPropertyRequest) returns (AddPropertyResponse);
+
+    rpc create_users(stream User) returns (CreateUsersResponse);
+
+    rpc update_property(UpdatePropertyRequest) returns (UpdatePropertyResponse);
+
+    rpc remove_property(RemovePropertyRequest) returns (RemovePropertyResponse);
+
+    // --- Guest operations ---
+    rpc list_available_properties(ListPropertiesRequest) returns (stream Property);
+
+    rpc search_property(SearchPropertyRequest) returns (SearchPropertyResponse);
+
+    rpc book_property(BookPropertyRequest) returns (BookPropertyResponse);
+
+    rpc confirm_booking(ConfirmBookingRequest) returns (ConfirmBookingResponse);
+}
