@@ -17,16 +17,18 @@ public function main() returns error? {
         error? result = ();
 
         match choice.trim() {
-            "1" => { result = viewAllAssets(); }
-            "2" => { result = viewByInstitution(); }
-            "3" => { result = viewBySite(); }
-            "4" => { result = overdueDashboard(); }
-            "5" => { result = loanOrBookAsset(); }
-            "6" => { result = scheduleManager(); }
-            "7" => { result = viewAssetDetail(); }
-            "8" => { result = addAsset(); }
-            "9" => { result = listInstitutions(); }
-            "0" => {
+            "1"  => { result = viewAllAssets(); }
+            "2"  => { result = viewByInstitution(); }
+            "3"  => { result = viewBySite(); }
+            "4"  => { result = overdueDashboard(); }
+            "5"  => { result = loanOrBookAsset(); }
+            "6"  => { result = scheduleManager(); }
+            "7"  => { result = viewAssetDetail(); }
+            "8"  => { result = addAsset(); }
+            "9"  => { result = listInstitutions(); }
+            "10" => { result = workOrderManager(); }
+            "11" => { result = viewAllWorkOrders(); }
+            "0"  => {
                 io:println("\n  Goodbye.\n");
                 return;
             }
@@ -55,18 +57,20 @@ function printMenu() {
     io:println("   7. View one asset in detail");
     io:println("   8. Add a new asset");
     io:println("   9. List institutions");
+    io:println("  10. Work Order Manager");
+    io:println("  11. View all work orders       (global view)");
     io:println("   0. Exit");
     io:println("===================================================");
 }
 
-// ---- 2. GLOBAL VIEW --------------------------------------------------
+// ---- 1. GLOBAL VIEW --------------------------------------------------
 
 function viewAllAssets() returns error? {
     Asset[] assets = check libraryApi->get("/assets");
     printAssetTable(assets, "ALL ASSETS ACROSS THE MINISTRY");
 }
 
-// ---- 3. CAMPUS VIEW --------------------------------------------------
+// ---- 2. CAMPUS VIEW --------------------------------------------------
 
 function viewByInstitution() returns error? {
     io:println("\n  Example: Namibia University of Science and Technology");
@@ -121,7 +125,7 @@ function overdueDashboard() returns error? {
     io:println("\n  " + overdue.length().toString() + " overdue item(s).");
 }
 
-// ---- 1. LOANING & BOOKING --------------------------------------------
+// ---- 5. LOANING & BOOKING --------------------------------------------
 
 function loanOrBookAsset() returns error? {
     string tag = io:readln("\n  Asset tag to loan or book: ").trim();
@@ -142,7 +146,6 @@ function loanOrBookAsset() returns error? {
         return;
     }
 
-    // Availability check against existing schedules for the date.
     string date = io:readln("  Date required (YYYY-MM-DD): ").trim();
     Availability|error check_ = libraryApi->get(
         "/assets/" + urlEncode(tag) + "/availability?checkDate=" + urlEncode(date));
@@ -157,14 +160,12 @@ function loanOrBookAsset() returns error? {
     }
     io:println("  Available on " + date + ".");
 
-    // A physical space is OCCUPIED when booked; anything else is LOANED_OUT.
     boolean isSpace = asset?.category == "PHYSICAL_SPACE";
     string newStatus = isSpace ? "OCCUPIED" : "LOANED_OUT";
     string action = isSpace ? "Booking" : "Loan";
 
     string borrower = io:readln("  Borrower / booked by: ").trim();
 
-    // Two steps: record the booking as a schedule, then change the status.
     Schedule booking = {
         scheduleId: "BK-" + tag + "-" + date,
         'type: "BOOKING",
@@ -180,7 +181,7 @@ function loanOrBookAsset() returns error? {
     io:println("  " + updated.assetTag + " is now " + updated.status + ".");
 }
 
-// ---- 5. SCHEDULE MANAGER ---------------------------------------------
+// ---- 6. SCHEDULE MANAGER ---------------------------------------------
 
 function scheduleManager() returns error? {
     string tag = io:readln("\n  Asset tag: ").trim();
@@ -266,8 +267,8 @@ function viewAssetDetail() returns error? {
         io:println("    " + w.orderId + " | " + w.status + " | " + w.description);
         Task[] tasks = w?.tasks ?: [];
         foreach Task t in tasks {
-            string done = (t?.completed ?: false) ? "[x]" : "[ ]";
-            io:println("        " + done + " " + t.taskId + " - " + t.description);
+            string done = w.status == "CLOSED" ? "[x]" : "[ ]";
+            io:println("        " + done + "  Task ID: " + t.taskId + "  -  " + t.description);
         }
     }
 }
@@ -320,6 +321,243 @@ function listInstitutions() returns error? {
     io:println("\n  " + institutions.length().toString() + " institution(s).");
 }
 
+// ---- 10. WORK ORDER MANAGER ------------------------------------------
+
+function workOrderManager() returns error? {
+    io:println("\n--- WORK ORDER MANAGER -------------------------------");
+
+    string tag = io:readln("  Asset tag (e.g. NUST-LIB-LAP-014): ").trim();
+    if tag == "" {
+        return error("Asset tag cannot be blank");
+    }
+
+    Asset|error asset = libraryApi->get("/assets/" + urlEncode(tag));
+    if asset is error {
+        io:println("\n  No asset with tag '" + tag + "'.");
+        return;
+    }
+
+    io:println("\n  Found: " + asset.name + "  (status: " + asset.status + ")");
+
+    WorkOrder[] existing = asset?.workOrders ?: [];
+    io:println("\n  Existing work orders (" + existing.length().toString() + "):");
+    if existing.length() == 0 {
+        io:println("    (none)");
+    } else {
+        foreach WorkOrder w in existing {
+            io:println("    " + w.orderId + " | " + w.status + " | " + w.description);
+            Task[] tasks = w?.tasks ?: [];
+            foreach Task t in tasks {
+                string done = w.status == "CLOSED" ? "[x]" : "[ ]";
+                io:println("        " + done + "  Task ID: " + t.taskId + "  -  " + t.description);
+            }
+        }
+    }
+
+    io:println("\n    a) Open a new work order");
+    io:println("    b) Update a work order status");
+    io:println("    c) Add a task to a work order");
+    io:println("    d) Remove a task from a work order");
+    io:println("    e) Close a work order");
+    io:println("    x) Cancel");
+    string action = io:readln("  Choose: ").trim().toLowerAscii();
+
+    match action {
+        "a" => { return openNewWorkOrder(tag); }
+        "b" => { return updateExistingWorkOrder(tag, existing); }
+        "c" => { return addTaskToWorkOrder(tag, existing); }
+        "d" => { return removeTaskFromWorkOrder(tag, existing); }
+        "e" => { return closeExistingWorkOrder(tag, existing); }
+        _ => {
+            io:println("\n  Cancelled.");
+            return;
+        }
+    }
+}
+
+function openNewWorkOrder(string assetTag) returns error? {
+    io:println("\n  --- NEW WORK ORDER ---");
+
+    WorkOrder wo = {
+        orderId: io:readln("    Order ID (e.g. WO-555): ").trim(),
+        status: "OPEN",
+        description: io:readln("    Description: ").trim(),
+        tasks: []
+    };
+
+    if wo.orderId == "" {
+        return error("Order ID is required");
+    }
+
+    Asset|error result = libraryApi->post(
+        "/assets/" + urlEncode(assetTag) + "/workorders", wo);
+
+    if result is error {
+        io:println("\n  !! Could not open work order: " + result.message());
+        return;
+    }
+    io:println("\n  Work order " + wo.orderId + " opened.");
+}
+
+function updateExistingWorkOrder(string assetTag, WorkOrder[] orders) returns error? {
+    if orders.length() == 0 {
+        return error("No work orders exist for this asset.");
+    }
+
+    string orderId = io:readln("\n    Order ID to update: ").trim();
+
+    io:println("    New status:");
+    io:println("      1. OPEN");
+    io:println("      2. IN_PROGRESS");
+    io:println("      3. CLOSED");
+    string st = io:readln("    Choose (1-3): ").trim();
+
+    string newStatus = st == "1" ? "OPEN" :
+                       st == "2" ? "IN_PROGRESS" :
+                       st == "3" ? "CLOSED" : "";
+
+    if newStatus == "" {
+        return error("Invalid status choice");
+    }
+
+    json payload = {
+        "status": newStatus,
+        "description": io:readln("    New description (or blank): ").trim()
+    };
+
+    Asset|error result = libraryApi->put(
+        "/assets/" + urlEncode(assetTag) + "/workorders/" + urlEncode(orderId),
+        payload);
+
+    if result is error {
+        io:println("\n  !! Could not update: " + result.message());
+        return;
+    }
+    io:println("\n  Work order " + orderId + " updated to " + newStatus + ".");
+}
+
+function addTaskToWorkOrder(string assetTag, WorkOrder[] orders) returns error? {
+    if orders.length() == 0 {
+        return error("No work orders exist for this asset.");
+    }
+
+    string orderId = io:readln("\n    Work order ID to add a task to: ").trim();
+
+    Task task = {
+        taskId: io:readln("    Task ID (e.g. T2): ").trim(),
+        description: io:readln("    Task description: ").trim(),
+        completed: false
+    };
+
+    if task.taskId == "" {
+        return error("Task ID is required");
+    }
+
+    Asset|error result = libraryApi->post(
+        "/assets/" + urlEncode(assetTag) + "/workorders/" + urlEncode(orderId) + "/tasks",
+        task);
+
+    if result is error {
+        io:println("\n  !! Could not add task: " + result.message());
+        return;
+    }
+    io:println("\n  Task " + task.taskId + " added to work order " + orderId + ".");
+}
+
+function removeTaskFromWorkOrder(string assetTag, WorkOrder[] orders) returns error? {
+    if orders.length() == 0 {
+        return error("No work orders exist for this asset.");
+    }
+
+    string orderId = io:readln("\n    Work order ID: ").trim();
+    string taskId  = io:readln("    Task ID to remove: ").trim();
+
+    Asset|error result = libraryApi->delete(
+        "/assets/" + urlEncode(assetTag) +
+        "/workorders/" + urlEncode(orderId) +
+        "/tasks/" + urlEncode(taskId));
+
+    if result is error {
+        io:println("\n  !! Could not remove task: " + result.message());
+        return;
+    }
+    io:println("\n  Task " + taskId + " removed.");
+}
+
+function closeExistingWorkOrder(string assetTag, WorkOrder[] orders) returns error? {
+    if orders.length() == 0 {
+        return error("No work orders exist for this asset.");
+    }
+
+    string orderId = io:readln("\n    Work order ID to close: ").trim();
+
+    json payload = {"status": "CLOSED"};
+
+    Asset|error result = libraryApi->put(
+        "/assets/" + urlEncode(assetTag) + "/workorders/" + urlEncode(orderId),
+        payload);
+
+    if result is error {
+        io:println("\n  !! Could not close: " + result.message());
+        return;
+    }
+    io:println("\n  Work order " + orderId + " closed.");
+}
+
+// ---- 11. VIEW ALL WORK ORDERS (GLOBAL VIEW) --------------------------
+
+function viewAllWorkOrders() returns error? {
+    Asset[] assets = check libraryApi->get("/assets");
+
+    io:println("\n--- ALL WORK ORDERS ACROSS THE MINISTRY ----------------");
+
+    int totalWorkOrders = 0;
+    int openCount = 0;
+    int inProgressCount = 0;
+    int closedCount = 0;
+
+    foreach Asset a in assets {
+        WorkOrder[] orders = a?.workOrders ?: [];
+        if orders.length() == 0 {
+            continue;
+        }
+
+        io:println("\n  Asset: " + a.assetTag + "  |  " + a.name);
+        io:println("  Site : " + a.site);
+
+        foreach WorkOrder w in orders {
+            totalWorkOrders += 1;
+
+            if w.status == "OPEN" {
+                openCount += 1;
+            } else if w.status == "IN_PROGRESS" {
+                inProgressCount += 1;
+            } else if w.status == "CLOSED" {
+                closedCount += 1;
+            }
+
+            io:println("    " + w.orderId + " | " + w.status + " | " + w.description);
+
+            Task[] tasks = w?.tasks ?: [];
+            foreach Task t in tasks {
+                string done = w.status == "CLOSED" ? "[x]" : "[ ]";
+                io:println("        " + done + "  Task ID: " + t.taskId + "  -  " + t.description);
+            }
+        }
+    }
+
+    io:println("\n-------------------------------------------------------");
+    if totalWorkOrders == 0 {
+        io:println("  No work orders found across any asset.");
+    } else {
+        io:println("  Total work orders : " + totalWorkOrders.toString());
+        io:println("    OPEN            : " + openCount.toString());
+        io:println("    IN_PROGRESS     : " + inProgressCount.toString());
+        io:println("    CLOSED          : " + closedCount.toString());
+    }
+    io:println("-------------------------------------------------------");
+}
+
 // ---- Helpers ---------------------------------------------------------
 
 function printAssetTable(Asset[] assets, string heading) {
@@ -344,7 +582,6 @@ function pad(string text, int width) returns string {
     return result + " ";
 }
 
-// Percent-encodes spaces so institution and site names work in a path.
 function urlEncode(string input) returns string {
     string result = "";
     int i = 0;
