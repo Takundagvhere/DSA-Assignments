@@ -22,12 +22,13 @@ public function main() returns error? {
             "3"  => { result = viewBySite(); }
             "4"  => { result = overdueDashboard(); }
             "5"  => { result = loanOrBookAsset(); }
-            "6"  => { result = scheduleManager(); }
-            "7"  => { result = viewAssetDetail(); }
-            "8"  => { result = addAsset(); }
-            "9"  => { result = listInstitutions(); }
-            "10" => { result = workOrderManager(); }
-            "11" => { result = viewAllWorkOrders(); }
+            "6"  => { result = returnLoanedAsset(); }
+            "7"  => { result = scheduleManager(); }
+            "8"  => { result = viewAssetDetail(); }
+            "9"  => { result = addAsset(); }
+            "10"  => { result = listInstitutions(); }
+            "11" => { result = workOrderManager(); }
+            "12" => { result = viewAllWorkOrders(); }
             "0"  => {
                 io:println("\n  Goodbye.\n");
                 return;
@@ -53,12 +54,13 @@ function printMenu() {
     io:println("   3. View assets by site/campus");
     io:println("   4. Overdue dashboard");
     io:println("   5. Loan an asset / book a room");
-    io:println("   6. Schedule manager");
-    io:println("   7. View one asset in detail");
-    io:println("   8. Add a new asset");
-    io:println("   9. List institutions");
-    io:println("  10. Work Order Manager");
-    io:println("  11. View all work orders       (global view)");
+    io:println("   6. Return a loaned asset");
+    io:println("   7. Schedule manager");
+    io:println("   8. View one asset in detail");
+    io:println("   9. Add a new asset");
+    io:println("   10. List institutions");
+    io:println("   11. Work Order Manager");
+    io:println("   12. View all work orders       (global view)");
     io:println("   0. Exit");
     io:println("===================================================");
 }
@@ -73,11 +75,15 @@ function viewAllAssets() returns error? {
 // ---- 2. CAMPUS VIEW --------------------------------------------------
 
 function viewByInstitution() returns error? {
-    io:println("\n  Example: Namibia University of Science and Technology");
-    string name = io:readln("  Institution name: ").trim();
-    if name == "" {
+    io:println("\n  Shortcuts: NUST, UNAM, IUM");
+    io:println("  Or type the full institution name.");
+    string input = io:readln("  Institution name or code: ").trim();
+    if input == "" {
         return error("Institution name cannot be blank");
     }
+
+    string name = resolveInstitution(input);
+    io:println("  Looking for: " + name);
 
     Asset[]|error assets = libraryApi->get("/assets/institution/" + urlEncode(name));
     if assets is error {
@@ -86,13 +92,16 @@ function viewByInstitution() returns error? {
     }
     printAssetTable(assets, "ASSETS AT " + name.toUpperAscii());
 }
-
 function viewBySite() returns error? {
-    io:println("\n  Example: Main Campus - Library");
-    string site = io:readln("  Site / campus: ").trim();
-    if site == "" {
+    io:println("\n  Shortcuts: NUST-LIB, NUST-IL");
+    io:println("  Or type the full site name.");
+    string input = io:readln("  Site / campus: ").trim();
+    if input == "" {
         return error("Site cannot be blank");
     }
+
+    string site = resolveInstitution(input);
+    io:println("  Looking for: " + site);
 
     Asset[]|error assets = libraryApi->get("/assets/site/" + urlEncode(site));
     if assets is error {
@@ -180,8 +189,66 @@ function loanOrBookAsset() returns error? {
     io:println("\n  " + action + " recorded.");
     io:println("  " + updated.assetTag + " is now " + updated.status + ".");
 }
+// ---- 6. RETURN A LOANED ASSET ---------------------------------------
 
-// ---- 6. SCHEDULE MANAGER ---------------------------------------------
+// ---- 6. RETURN A LOANED ASSET ----------------------------------------
+
+function returnLoanedAsset() returns error? {
+    io:println("\n--- RETURN LOANED ASSET -------------------------------");
+
+    string tag = io:readln("  Asset tag to return: ").trim();
+    if tag == "" {
+        return error("Asset tag cannot be blank");
+    }
+
+    Asset|error asset = libraryApi->get("/assets/" + urlEncode(tag));
+    if asset is error {
+        io:println("\n  No asset with tag '" + tag + "'.");
+        return;
+    }
+
+    if asset.status != "LOANED_OUT" && asset.status != "OCCUPIED" {
+        io:println("\n  !! This asset is not on loan.");
+        io:println("     Current status: " + asset.status);
+        return;
+    }
+
+    io:println("\n  Found: " + asset.name);
+    io:println("  Current status: " + asset.status);
+
+    // Remove schedules only if there are any
+    Schedule[] schedules = asset?.schedules ?: [];
+    if schedules.length() > 0 {
+        io:println("\n  Schedules on this asset:");
+        foreach Schedule s in schedules {
+            io:println("    " + s.scheduleId + " | " + s.'type + " | due " + s.dueDate +
+                    " | " + s.description);
+        }
+
+        io:println("\n  Enter a schedule ID to remove it (or press Enter to keep them).");
+        string scheduleId = io:readln("  Schedule ID: ").trim();
+
+        if scheduleId != "" {
+            Asset|error removeResult = libraryApi->delete(
+                "/assets/" + urlEncode(tag) + "/schedules/" + urlEncode(scheduleId));
+            if removeResult is error {
+                io:println("\n  !! Could not remove schedule: " + removeResult.message());
+            } else {
+                io:println("\n  Schedule " + scheduleId + " removed.");
+            }
+        }
+    } else {
+        io:println("\n  No schedules found — nothing to remove.");
+    }
+
+    // ALWAYS reset status, even if there were no schedules
+    record {|string status;|} statusChange = {status: "AVAILABLE"};
+    Asset updated = check libraryApi->put(
+        "/assets/" + urlEncode(tag) + "/status", statusChange);
+
+    io:println("\n  ✅ " + updated.assetTag + " is now " + updated.status + ".");
+}
+// ---- 7. SCHEDULE MANAGER ---------------------------------------------
 
 function scheduleManager() returns error? {
     string tag = io:readln("\n  Asset tag: ").trim();
@@ -218,18 +285,23 @@ function scheduleManager() returns error? {
         Asset _ = check libraryApi->post("/assets/" + urlEncode(tag) + "/schedules", newSchedule);
         io:println("\n  Schedule added.");
 
-    } else if action == "d" {
+            } else if action == "d" {
         string scheduleId = io:readln("    Schedule ID to remove: ").trim();
         Asset _ = check libraryApi->delete(
             "/assets/" + urlEncode(tag) + "/schedules/" + urlEncode(scheduleId));
         io:println("\n  Schedule removed.");
 
+        // Reset the asset status back to AVAILABLE
+        record {|string status;|} statusChange = {status: "AVAILABLE"};
+        Asset updated = check libraryApi->put(
+            "/assets/" + urlEncode(tag) + "/status", statusChange);
+        io:println("  Asset status reset to: " + updated.status);
+
     } else {
         io:println("\n  Cancelled.");
     }
-}
-
-// ---- 7. ASSET DETAIL -------------------------------------------------
+}   
+// ---- 8. ASSET DETAIL -------------------------------------------------
 
 function viewAssetDetail() returns error? {
     string tag = io:readln("\n  Asset tag: ").trim();
@@ -273,7 +345,7 @@ function viewAssetDetail() returns error? {
     }
 }
 
-// ---- 8. ADD AN ASSET -------------------------------------------------
+// ---- 9. ADD AN ASSET -------------------------------------------------
 
 function addAsset() returns error? {
     io:println("\n--- NEW ASSET ----------------------------------------");
@@ -305,7 +377,7 @@ function addAsset() returns error? {
     io:println("\n  Created " + created.assetTag + ".");
 }
 
-// ---- 9. INSTITUTIONS -------------------------------------------------
+// ---- 10. INSTITUTIONS -------------------------------------------------
 
 function listInstitutions() returns error? {
     Institution[] institutions = check libraryApi->get("/institutions");
@@ -321,7 +393,7 @@ function listInstitutions() returns error? {
     io:println("\n  " + institutions.length().toString() + " institution(s).");
 }
 
-// ---- 10. WORK ORDER MANAGER ------------------------------------------
+// ---- 11. WORK ORDER MANAGER ------------------------------------------
 
 function workOrderManager() returns error? {
     io:println("\n--- WORK ORDER MANAGER -------------------------------");
@@ -504,7 +576,7 @@ function closeExistingWorkOrder(string assetTag, WorkOrder[] orders) returns err
     io:println("\n  Work order " + orderId + " closed.");
 }
 
-// ---- 11. VIEW ALL WORK ORDERS (GLOBAL VIEW) --------------------------
+// ---- 12. VIEW ALL WORK ORDERS (GLOBAL VIEW) --------------------------
 
 function viewAllWorkOrders() returns error? {
     Asset[] assets = check libraryApi->get("/assets");
@@ -591,4 +663,18 @@ function urlEncode(string input) returns string {
         i += 1;
     }
     return result;
+}
+// Translate short institution codes to full names.
+// If the input isn't a known shortcut, it's returned unchanged.
+function resolveInstitution(string input) returns string {
+    string trimmed = input.trim().toUpperAscii();
+
+    match trimmed {
+        "NUST" => { return "Namibia University of Science and Technology"; }
+        "UNAM" => { return "University of Namibia"; }
+        "IUM"  => { return "International University of Management"; }
+        "NUST-LIB" => { return "Main Campus - Library"; }
+        "NUST-IL"  => { return "Main Campus - Innovation Lab"; }
+        _ => { return input.trim(); }
+    }
 }
